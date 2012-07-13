@@ -1,144 +1,153 @@
-CodeMirror.defineMode("soy", function(config) {
-    function parseWords(str) {
-        var obj = {}, words = str.split(" ");
-        for (var i = 0; i < words.length; ++i) obj[words[i]] = true;
-        return obj;
-    }
+CodeMirror.defineMode("soy", function(config, parserConfig) {
+	var keyFuncs = ["literal","namespace","template","print","msg","call","param"];
+	var last;
+	var regs = {
+		operatorChars: /[+\-*&%=<>!?]/,
+		validIdentifier: /[a-zA-Z0-9\_]/,
+		stringChar: /[\'\"]/
+	};
+	var leftDelim = (typeof config.mode.leftDelimiter != 'undefined') ? config.mode.leftDelimiter : "{";
+	var rightDelim = (typeof config.mode.rightDelimiter != 'undefined') ? config.mode.rightDelimiter : "}";
+	function ret(style, lst) { last = lst; return style; }
 
-    var indentUnit = config.indentUnit
-    var keywords = parseWords("literal namespace template print msg call param");
-    var functions = parseWords("foreach if ifempty else");
-    var specials = parseWords("$foreach.count $foreach.hasNext $foreach.first $foreach.last $foreach.topmost $foreach.parent $velocityCount");
-    var isOperatorChar = /[+\-*&%=<>!?:\/|]/;
-    var multiLineStrings =true;
 
-    function chain(stream, state, f) {
-        state.tokenize = f;
-        return f(stream, state);
-    }
-    function tokenBase(stream, state) {
-        var beforeParams = state.beforeParams;
-        state.beforeParams = false;
-        var ch = stream.next();
-        // start of string?
-        if ((ch == '"' || ch == "'") && state.inParams)
-            return chain(stream, state, tokenString(ch));
-        // is it one of the special signs []{}().,;? Seperator?
-        else if (/[\[\]{}\(\),;\.]/.test(ch)) {
-            if (ch == "(" && beforeParams) state.inParams = true;
-            else if (ch == ")") state.inParams = false;
-            return null;
-        }
-        // start of a number value?
-        else if (/\d/.test(ch)) {
-            stream.eatWhile(/[\w\.]/);
-            return "number";
-        }
-        // multi line comment?
-        else if (ch == "/" && stream.eat("*")) {
-            return chain(stream, state, tokenComment);
-        }
-        // unparsed content?
-        else if (ch == "#" && stream.match(/ *\[ *\[/)) {
-            return chain(stream, state, tokenUnparsed);
-        }
-        // single line comment?
-        else if (ch == "/" && stream.eat("/")) {
-            stream.skipToEnd();
-            return "comment";
-        }
-        // variable?
-        else if (ch == "$") {
-            stream.eatWhile(/[\w\d\$_\.{}]/);
-            // is it one of the specials?
-            if (specials && specials.propertyIsEnumerable(stream.current().toLowerCase())) {
-                return "keyword";
-            }
-            else {
-                state.beforeParams = true;
-                return "builtin";
-            }
-        }
-        // is it a operator?
-        else if (isOperatorChar.test(ch)) {
-            stream.eatWhile(isOperatorChar);
-            return "operator";
-        }
-        else {
-            // get the whole word
-            stream.eatWhile(/[\w\$_{}]/);
-            var word = stream.current().toLowerCase();
-            // is it one of the listed keywords?
-            //if (keywords && keywords.propertyIsEnumerable(word))
-            //    return "keyword";
-            // is it one of the listed functions?
-            //if (functions && functions.propertyIsEnumerable(word) ||
-            //    stream.current().match(/^#[a-z0-9_]+ *$/i) && stream.peek()=="(") {
-            //    state.beforeParams = true;
-            //    return "keyword";
-            //}
-            // default: just a "word"
-            return null;
-        }
-    }
-
-    function tokenString(quote) {
-        return function(stream, state) {
-            var escaped = false, next, end = false;
-            while ((next = stream.next()) != null) {
-                if (next == quote && !escaped) {
-                    end = true;
-                    break;
-                }
-                escaped = !escaped && next == "\\";
-            }
-            if (end) state.tokenize = tokenBase;
-            return "string";
-        };
-    }
-
+	function tokenizer(stream, state) {
+		function chain(parser) {
+			state.tokenize = parser;
+			return parser(stream, state);
+		}
+		if(stream.match("/", true)) {
+			if (stream.eat("*")) {
+				return chain(inBlock("comment", "*" + "/"));
+			}
+		}
+		if (stream.match(leftDelim, true)) {
+			if (stream.eat("*")) {
+				return chain(inBlock("comment", "*" + rightDelim));
+			} else {
+        		state.tokenize = inSmarty;
+        		return "tag";
+			}
+		} else {
+			// I'd like to do an eatWhile() here, but I can't get it to eat only up to the rightDelim string/char
+			stream.next();
+			return null;
+		}
+	}
+  
     function tokenComment(stream, state) {
-        var maybeEnd = false, ch;
-        while (ch = stream.next()) {
-            if (ch == "/" && maybeEnd) {
-                state.tokenize = tokenBase;
-                break;
-            }
-            maybeEnd = (ch == "*");
-        }
-        return "comment";
-    }
+		var maybeEnd = false, ch;
+		while (ch = stream.next()) {
+			if (ch == "/" && maybeEnd) {
+				state.tokenize = null;
+				break;
+			}
+			maybeEnd = (ch == "*");
+		}
+		return "comment";
+	}
 
-    function tokenUnparsed(stream, state) {
-        var maybeEnd = 0, ch;
-        while (ch = stream.next()) {
-            if (ch == "#" && maybeEnd == 2) {
-                state.tokenize = tokenBase;
-                break;
-            }
-            if (ch == "]")
-                maybeEnd++;
-            else if (ch != " ")
-                maybeEnd = 0;
-        }
-        return "meta";
-    }
-    // Interface
+	function inSmarty(stream, state) {
+		if (stream.match(rightDelim, true)) {
+			state.tokenize = tokenizer;
+			return ret("tag", null);
+		}
 
-    return {
-        startState: function(basecolumn) {
-            return {
-                tokenize: tokenBase,
-                beforeParams: false,
-                inParams: false
-            };
-        },
+		var ch = stream.next();
 
-        token: function(stream, state) {
-            if (stream.eatSpace()) return null;
-            return state.tokenize(stream, state);
-        }
-    };
+		if (ch == "$") {
+			stream.eatWhile(regs.validIdentifier);
+			return ret("variable-2", "variable");
+		} else if (ch == ".") {
+			return ret("operator", "property");
+		} else if (regs.stringChar.test(ch)) {
+			state.tokenize = inAttribute(ch);
+			return ret("string", "string");
+		} else if (regs.operatorChars.test(ch)) {
+			stream.eatWhile(regs.operatorChars);
+			return ret("operator", "operator");
+		} else if (ch == "[" || ch == "]") {
+			return ret("bracket", "bracket");
+		} else if (/\d/.test(ch)) {
+			stream.eatWhile(/\d/);
+			return ret("number", "number");
+		} else {
+			if (state.last == "variable") {
+				if (ch == "@") {
+					stream.eatWhile(regs.validIdentifier);
+					return ret("property", "property");
+				} else if (ch == "|") {
+					stream.eatWhile(regs.validIdentifier);
+					return ret("qualifier", "modifier");
+				}
+			} else if (state.last == "whitespace") {
+				stream.eatWhile(regs.validIdentifier);
+				return ret("attribute", "modifier");
+			} else if (state.last == "property") {
+				stream.eatWhile(regs.validIdentifier);
+				return ret("property", null);
+			} else if (/\s/.test(ch)) {
+				last = "whitespace";
+				return null;
+			}
+
+			var str = "";
+			if (ch != "/") {
+				str += ch;
+			}
+			var c = "";
+			while ((c = stream.eat(regs.validIdentifier))) {
+				str += c;
+			}
+			var i, j;
+			for (i=0, j=keyFuncs.length; i<j; i++) {
+				if (keyFuncs[i] == str) {
+					return ret("keyword", "keyword");
+				}
+			}
+			if (/\s/.test(ch)) {
+				return null;
+			}
+			return ret("tag", "tag");
+		}
+	}
+
+	function inAttribute(quote) {
+		return function(stream, state) {
+			while (!stream.eol()) {
+				if (stream.next() == quote) {
+					state.tokenize = inSmarty;
+					break;
+				}
+			}
+			return "string";
+		};
+	}
+
+	function inBlock(style, terminator) {
+		return function(stream, state) {
+			while (!stream.eol()) {
+				if (stream.match(terminator)) {
+					state.tokenize = tokenizer;
+					break;
+				}
+				stream.next();
+			}
+			return style;
+		};
+	}
+
+	return {
+		startState: function() {
+			return { tokenize: tokenizer, mode: "soy", last: null };
+		},
+		token: function(stream, state) {
+			var style = state.tokenize(stream, state);
+			state.last = last;
+			return style;
+		},
+		electricChars: ""
+	}
 });
 
 CodeMirror.defineMIME("text/soy", "soy");
