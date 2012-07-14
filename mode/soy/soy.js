@@ -32,6 +32,10 @@ CodeMirror.defineMode("soy", function(config, parserConfig) {
 			if (stream.eat("*")) {
 				return chain(inBlock("comment", "*" + "/"));
 			}
+			if (stream.eat("/")) {
+				stream.skipToEnd();
+				return "comment";
+			}
 		}
 		if (stream.match(leftDelim, true)) {
 			if (stream.eat("*")) {
