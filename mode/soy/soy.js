@@ -1,5 +1,17 @@
 CodeMirror.defineMode("soy", function(config, parserConfig) {
-	var keyFuncs = ["literal","namespace","template","print","msg","call","param"];
+	var keyFuncs = [
+			"literal", "namespace", "template", "print", "msg"
+			, "call", "param"
+			, "foreach", "if", "ifempty", "else", "elseif", "for"
+			, "switch", "case", "default"
+			, "css"
+			, "deltemplate", "delcall", "delpackage"
+		];
+	var printDirectives = [
+			"noAutoescape", "id"
+			,"escapeHtml", "escapeUri", "escapeJs"
+			,"insertWordBreaks", "truncate"
+		];
 	var last;
 	var regs = {
 		operatorChars: /[+\-*&%=<>!?]/,
@@ -25,7 +37,7 @@ CodeMirror.defineMode("soy", function(config, parserConfig) {
 			if (stream.eat("*")) {
 				return chain(inBlock("comment", "*" + rightDelim));
 			} else {
-        		state.tokenize = inSmarty;
+        		state.tokenize = inDirective;
         		return "tag";
 			}
 		} else {
@@ -35,7 +47,7 @@ CodeMirror.defineMode("soy", function(config, parserConfig) {
 		}
 	}
   
-    function tokenComment(stream, state) {
+	function tokenComment(stream, state) {
 		var maybeEnd = false, ch;
 		while (ch = stream.next()) {
 			if (ch == "/" && maybeEnd) {
@@ -47,7 +59,7 @@ CodeMirror.defineMode("soy", function(config, parserConfig) {
 		return "comment";
 	}
 
-	function inSmarty(stream, state) {
+	function inDirective(stream, state) {
 		if (stream.match(rightDelim, true)) {
 			state.tokenize = tokenizer;
 			return ret("tag", null);
@@ -116,7 +128,7 @@ CodeMirror.defineMode("soy", function(config, parserConfig) {
 		return function(stream, state) {
 			while (!stream.eol()) {
 				if (stream.next() == quote) {
-					state.tokenize = inSmarty;
+					state.tokenize = inDirective;
 					break;
 				}
 			}
